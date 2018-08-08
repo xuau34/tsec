@@ -14,12 +14,15 @@ from datetime import datetime, timedelta
 from os import mkdir
 from os.path import isdir
 
+import numpy as np
+
 class Crawler():
     def __init__(self, prefix="data"):
         ''' Make directory if not exist when initialize '''
         if not isdir(prefix):
             mkdir(prefix)
         self.prefix = prefix
+        self.codes = np.load( "codes.npy" ).astype( str )
 
     def _clean_row(self, row):
         ''' Clean comma and spaces '''
@@ -30,7 +33,7 @@ class Crawler():
     def _record(self, stock_id, row):
         ''' Save row to csv file '''
         f = open('{}/{}.csv'.format(self.prefix, stock_id), 'a')
-        cw = csv.writer(f, lineterminator='\n')
+        cw = csv.writer(f, delimiter=',', quotechar='"', lineterminator='\n', quoting=csv.QUOTE_NONNUMERIC)
         cw.writerow(row)
         f.close()
 
@@ -46,7 +49,12 @@ class Crawler():
         }
 
         # Get json data
-        page = requests.get(url, params=query_params)
+        try:
+            page = requests.get(url, params=query_params)
+        except:
+            logging.error("Can not get TSE data at {}".format(date_str))
+            print( "Requests on TSE at {} failed.".format(date_str) )
+            return
 
         if not page.ok:
             logging.error("Can not get TSE data at {}".format(date_str))
@@ -58,16 +66,18 @@ class Crawler():
         date_str_mingguo = '{0}/{1:02d}/{2:02d}'.format(date_tuple[0] - 1911, date_tuple[1], date_tuple[2])
 
         for data in content['data5']:
+            if data[0] not in self.codes:
+                continue
+
             sign = '-' if data[9].find('green') > 0 else ''
             row = self._clean_row([
+                data[0], # 代碼
                 date_str_mingguo, # 日期
-                data[2], # 成交股數
-                data[4], # 成交金額
+                data[1], # 中文簡稱
                 data[5], # 開盤價
                 data[6], # 最高價
                 data[7], # 最低價
                 data[8], # 收盤價
-                sign + data[10], # 漲跌價差
                 data[3], # 成交筆數
             ])
 
@@ -77,7 +87,12 @@ class Crawler():
         date_str = '{0}/{1:02d}/{2:02d}'.format(date_tuple[0] - 1911, date_tuple[1], date_tuple[2])
         ttime = str(int(time.time()*100))
         url = 'http://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&d={}&_={}'.format(date_str, ttime)
-        page = requests.get(url)
+        try:
+        	page = requests.get(url)
+        except:
+            logging.error("Can not get OTC data at {}".format(date_str))
+            print( "Requests on OTC at {} failed.".format(date_str) )
+            return
 
         if not page.ok:
             logging.error("Can not get OTC data at {}".format(date_str))
@@ -91,15 +106,17 @@ class Crawler():
 
         for table in [result['mmData'], result['aaData']]:
             for tr in table:
+                if tr[0] not in self.codes:
+                    continue
+
                 row = self._clean_row([
-                    date_str,
-                    tr[8], # 成交股數
-                    tr[9], # 成交金額
+                    tr[0], # 代碼
+                    date_str, # 日期
+                    tr[1], # 中文簡稱
                     tr[4], # 開盤價
                     tr[5], # 最高價
                     tr[6], # 最低價
                     tr[2], # 收盤價
-                    tr[3], # 漲跌價差
                     tr[10] # 成交筆數
                 ])
                 self._record(tr[0], row)
@@ -161,6 +178,7 @@ def main():
                 continue
             finally:
                 first_day -= timedelta(1)
+            time.sleep(3)
     else:
         crawler.get_data((first_day.year, first_day.month, first_day.day))
 
